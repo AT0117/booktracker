@@ -1,10 +1,12 @@
 import 'dart:convert';
 
+import 'package:booktracker/inventory.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import 'package:http/http.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -16,7 +18,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   bool isScanning = false;
   String statusMessage = "Take a pic of the books barcode";
-
+  String? scannedIsbn;
   String? bookTitle;
   String? bookAuthor;
   String? coverImageUrl;
@@ -50,9 +52,10 @@ class _HomePageState extends State<HomePage> {
         return;
       }
 
-      final String isbn = barcodes.first.rawValue ?? "";
+      final String isbn = (barcodes.first.rawValue ?? "").trim();
 
       setState(() {
+        scannedIsbn = isbn;
         statusMessage = "Found ISBN: $isbn \n Fetching book details...";
       });
 
@@ -107,7 +110,8 @@ class _HomePageState extends State<HomePage> {
         }
       } else {
         setState(() {
-          statusMessage = "Failed to contact book database";
+          statusMessage =
+              "GOOGLE API ERROR: ${response.statusCode} \n RESPONSE BODY: ${response.body}";
         });
       }
     } catch (e) {
@@ -115,6 +119,38 @@ class _HomePageState extends State<HomePage> {
         statusMessage = "Network Error";
       });
     }
+  }
+
+  Future<void> saveBookToInventory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? existingBooksJson = prefs.getString('saved_books');
+    List<dynamic> savedBooks = [];
+    if (existingBooksJson != null) {
+      savedBooks = jsonDecode(existingBooksJson);
+    }
+
+    final Map<String, dynamic> newBook = {
+      'isbn': scannedIsbn,
+      'title': bookTitle,
+      'author': bookAuthor,
+      'imageUrl': coverImageUrl,
+    };
+
+    savedBooks.add(newBook);
+    await prefs.setString('saved_books', json.encode(savedBooks));
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Book added to inventory!')));
+
+    setState(() {
+      scannedIsbn = null;
+      bookTitle = null;
+      bookAuthor = null;
+      coverImageUrl = null;
+      statusMessage = "Snap a picture of the next book!";
+    });
   }
 
   @override
@@ -126,7 +162,21 @@ class _HomePageState extends State<HomePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Book Tracker'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('Book Tracker'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.list_alt),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => InventoryPage()),
+              );
+            },
+          ),
+        ],
+        centerTitle: true,
+      ),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
@@ -184,20 +234,37 @@ class _HomePageState extends State<HomePage> {
 
               const SizedBox(height: 40),
 
-              isScanning
-                  ? const CircularProgressIndicator()
-                  : ElevatedButton.icon(
-                      onPressed: scanBook,
-                      icon: const Icon(Icons.camera_alt),
-                      label: const Text("Scan Book Barcode"),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 24,
-                          vertical: 16,
-                        ),
-                        textStyle: const TextStyle(fontSize: 18),
-                      ),
+              if (isScanning)
+                const CircularProgressIndicator()
+              else if (bookTitle != null)
+                ElevatedButton.icon(
+                  onPressed: saveBookToInventory,
+                  icon: const Icon(Icons.save),
+                  label: const Text("Save to Inventory"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 16,
                     ),
+                    textStyle: const TextStyle(fontSize: 18),
+                  ),
+                )
+              else
+                // Default "Scan" button
+                ElevatedButton.icon(
+                  onPressed: scanBook,
+                  icon: const Icon(Icons.camera_alt),
+                  label: const Text("Scan Book Barcode"),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 16,
+                    ),
+                    textStyle: const TextStyle(fontSize: 18),
+                  ),
+                ),
             ],
           ),
         ),
